@@ -16,10 +16,8 @@ use futures_util::StreamExt;
 use libc::mode_t;
 use tokio::signal;
 use tokio::sync::RwLock;
-use tracing::metadata::LevelFilter;
-use tracing::{debug, error, info, subscriber};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{fmt, Registry};
+use tracing::instrument;
+use tracing::{debug, error, info};
 
 const TTL: Duration = Duration::from_secs(1);
 
@@ -169,7 +167,7 @@ struct InnerFs {
 }
 
 #[derive(Debug)]
-struct Fs(RwLock<InnerFs>);
+pub struct Fs(RwLock<InnerFs>);
 
 impl Default for Fs {
     fn default() -> Self {
@@ -198,16 +196,19 @@ impl Filesystem for Fs {
     where
         Self: 'a;
 
+    #[instrument(level = "debug", skip(self))]
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         Ok(ReplyInit {
             max_write: NonZeroU32::new(16 * 1024).unwrap(),
         })
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn destroy(&self, _req: Request) {
         info!("destroy done")
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn lookup(&self, _req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
         let inner = self.0.read().await;
 
@@ -236,8 +237,10 @@ impl Filesystem for Fs {
         }
     }
 
-    async fn forget(&self, _req: Request, _inode: u64, _nlookup: u64) {}
+    #[instrument(level = "debug", skip(self))]
+    async fn forget(&self, _req: Request, inode: u64, _nlookup: u64) {}
 
+    #[instrument(level = "debug", skip(self))]
     async fn getattr(
         &self,
         _req: Request,
@@ -259,6 +262,7 @@ impl Filesystem for Fs {
         })
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn setattr(
         &self,
         _req: Request,
@@ -280,6 +284,7 @@ impl Filesystem for Fs {
         })
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn mkdir(
         &self,
         _req: Request,
@@ -330,6 +335,7 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn unlink(&self, _req: Request, parent: u64, name: &OsStr) -> Result<()> {
         let mut inner = self.0.write().await;
 
@@ -367,6 +373,7 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn rmdir(&self, _req: Request, parent: u64, name: &OsStr) -> Result<()> {
         let mut inner = self.0.write().await;
 
@@ -405,6 +412,7 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn rename(
         &self,
         _req: Request,
@@ -456,6 +464,7 @@ impl Filesystem for Fs {
         Err(libc::ENOTDIR.into())
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn link(
         &self,
         _req: Request,
@@ -502,6 +511,7 @@ impl Filesystem for Fs {
         })
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn open(&self, _req: Request, inode: u64, _flags: u32) -> Result<ReplyOpen> {
         let inner = self.0.read().await;
 
@@ -517,6 +527,7 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self, _req), fields(inode = inode, offset = offset, size = size))]
     async fn read(
         &self,
         _req: Request,
@@ -554,13 +565,14 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self, _req, data), fields(inode = inode, offset = offset, data_len = data.len()))]
     async fn write(
         &self,
         _req: Request,
         inode: u64,
         _fh: u64,
         offset: u64,
-        mut data: &[u8],
+        data: &[u8],
         _write_flags: u32,
         _flags: u32,
     ) -> Result<ReplyWrite> {
@@ -578,7 +590,7 @@ impl Filesystem for Fs {
                 let mut content = &mut file.content[offset as _..];
 
                 if content.len() > data.len() {
-                    io::copy(&mut data, &mut content).unwrap();
+                    io::copy(&mut data.clone(), &mut content).unwrap();
 
                     return Ok(ReplyWrite {
                         written: data.len() as _,
@@ -606,6 +618,7 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn release(
         &self,
         _req: Request,
@@ -618,21 +631,25 @@ impl Filesystem for Fs {
         Ok(())
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn fsync(&self, _req: Request, _inode: u64, _fh: u64, _datasync: bool) -> Result<()> {
         Ok(())
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn flush(&self, _req: Request, _inode: u64, _fh: u64, _lock_owner: u64) -> Result<()> {
         Ok(())
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn access(&self, _req: Request, _inode: u64, _mask: u32) -> Result<()> {
         Ok(())
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn create(
         &self,
-        _req: Request,
+        req: Request,
         parent: u64,
         name: &OsStr,
         mode: u32,
@@ -682,10 +699,12 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn interrupt(&self, _req: Request, _unique: u64) -> Result<()> {
         Ok(())
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn fallocate(
         &self,
         _req: Request,
@@ -726,6 +745,7 @@ impl Filesystem for Fs {
     where
         Self: 'a;
 
+    #[instrument(level = "debug", skip(self))]
     async fn readdirplus(
         &self,
         _req: Request,
@@ -805,6 +825,7 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self, req), fields(parent = parent, name = ?name, new_parent = new_parent, new_name = ?new_name, flags = _flags))]
     async fn rename2(
         &self,
         req: Request,
@@ -817,6 +838,7 @@ impl Filesystem for Fs {
         self.rename(req, parent, name, new_parent, new_name).await
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn lseek(
         &self,
         _req: Request,
@@ -855,6 +877,7 @@ impl Filesystem for Fs {
         }
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn copy_file_range(
         &self,
         req: Request,
@@ -882,14 +905,16 @@ impl Filesystem for Fs {
 }
 
 fn log_init() {
-    let layer = fmt::layer()
-        .pretty()
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    fmt::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
         .with_target(true)
-        .with_writer(io::stderr);
-
-    let layered = Registry::default().with(layer).with(LevelFilter::DEBUG);
-
-    subscriber::set_global_default(layered).unwrap();
+        .with_file(true)
+        .with_line_number(true)
+        .with_ansi(true)
+        .pretty()
+        .init();
 }
 
 #[tokio::main]
@@ -902,6 +927,8 @@ async fn main() {
             panic!("Failed to create mount directory: {}", e);
         }
     });
+
+    info!("Starting FUSE filesystem...");
 
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
