@@ -10,6 +10,7 @@ use std::vec::IntoIter;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fuse3::path::prelude::*;
 use fuse3::{Errno, MountOptions, Result};
+use futures_util::stream::Stream;
 use futures_util::stream::{Empty, Iter};
 use futures_util::{stream, StreamExt};
 use libc::mode_t;
@@ -130,10 +131,18 @@ struct Fs(RwLock<InnerFs>);
 
 impl Fs {
     pub fn new() -> Self {
+        let children = BTreeMap::from([(
+            OsString::from("hello"),
+            Entry::File(File {
+                name: OsString::from("world.txt"),
+                content: BytesMut::default(),
+                mode: 0o755,
+            }),
+        )]);
         Self(RwLock::new(InnerFs {
             root: Entry::Dir(Dir {
                 name: OsString::from("/"),
-                children: Default::default(),
+                children,
                 mode: 0o755,
             }),
         }))
@@ -147,11 +156,6 @@ impl Default for Fs {
 }
 
 impl PathFilesystem for Fs {
-    type DirEntryStream<'a>
-        = Empty<Result<DirectoryEntry>>
-    where
-        Self: 'a;
-
     #[instrument(skip(self), err(Debug))]
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         Ok(ReplyInit {
@@ -170,17 +174,6 @@ impl PathFilesystem for Fs {
         paths.push(name.as_ref());
 
         let mut entry = &self.0.read().await.root;
-
-        for path in paths {
-            if let Entry::Dir(dir) = entry {
-                entry = dir
-                    .children
-                    .get(OsStr::new(path))
-                    .ok_or_else(Errno::new_not_exist)?;
-            } else {
-                return Err(Errno::new_is_not_dir());
-            }
-        }
 
         Ok(ReplyEntry {
             ttl: TTL,
@@ -203,20 +196,15 @@ impl PathFilesystem for Fs {
 
         debug!("get attr path {}", path);
 
-        let paths = split_path(&path);
-
         let mut entry = &self.0.read().await.root;
 
-        for path in paths {
-            if let Entry::Dir(dir) = entry {
-                entry = dir
-                    .children
-                    .get(OsStr::new(path))
-                    .ok_or_else(Errno::new_not_exist)?;
-            } else {
-                return Err(Errno::new_is_not_dir());
-            }
-        }
+        // set  dir as default for now
+        // TODO: implement logic
+        let mut entry = Entry::Dir(Dir {
+            name: OsString::from("hello"),
+            children: Default::default(),
+            mode: 0o755,
+        });
 
         Ok(ReplyAttr {
             ttl: TTL,
@@ -252,6 +240,58 @@ impl PathFilesystem for Fs {
             ttl: TTL,
             attr: entry.set_attr(set_attr),
         })
+    }
+
+    #[doc = " read symbolic link."]
+    #[instrument(skip(self), err(Debug))]
+    fn readlink(
+        &self,
+        req: Request,
+        path: &OsStr,
+    ) -> impl ::core::future::Future<Output=Result<ReplyData>> + Send {
+        async move {
+            {
+                error!("Not implemented");
+                Err(libc::ENOSYS.into())
+            }
+        }
+    }
+
+    #[doc = " create a symbolic link."]
+    #[instrument(skip(self), err(Debug))]
+    fn symlink(
+        &self,
+        req: Request,
+        parent: &OsStr,
+        name: &OsStr,
+        link_path: &OsStr,
+    ) -> impl ::core::future::Future<Output=Result<ReplyEntry>> + Send {
+        async move {
+            {
+                error!("Not implemented");
+                Err(libc::ENOSYS.into())
+            }
+        }
+    }
+
+    #[doc = " create file node. Create a regular file, character device, block device, fifo or socket"]
+    #[doc = " node. When creating file, most cases user only need to implement"]
+    #[doc = " [`create`][PathFilesystem::create]."]
+    #[instrument(skip(self), err(Debug))]
+    fn mknod(
+        &self,
+        req: Request,
+        parent: &OsStr,
+        name: &OsStr,
+        mode: u32,
+        rdev: u32,
+    ) -> impl ::core::future::Future<Output=Result<ReplyEntry>> + Send {
+        async move {
+            {
+                error!("Not implemented");
+                Err(libc::ENOSYS.into())
+            }
+        }
     }
 
     #[instrument(skip(self), err(Debug))]
@@ -458,6 +498,23 @@ impl PathFilesystem for Fs {
         Ok(())
     }
 
+    #[doc = " create a hard link."]
+    #[instrument(skip(self), err(Debug))]
+    fn link(
+        &self,
+        req: Request,
+        path: &OsStr,
+        new_parent: &OsStr,
+        new_name: &OsStr,
+    ) -> impl ::core::future::Future<Output=Result<ReplyEntry>> + Send {
+        async move {
+            {
+                error!("Not implemented");
+                Err(libc::ENOSYS.into())
+            }
+        }
+    }
+
     #[instrument(skip(self), err(Debug))]
     async fn open(&self, _req: Request, path: &OsStr, flags: u32) -> Result<ReplyOpen> {
         let path = path.to_string_lossy();
@@ -534,7 +591,7 @@ impl PathFilesystem for Fs {
         Ok(ReplyData { data: data.into() })
     }
 
-    #[instrument(skip(self), err(Debug))]
+    #[instrument(skip(self, data), err(Debug))]
     async fn write(
         &self,
         _req: Request,
@@ -592,6 +649,38 @@ impl PathFilesystem for Fs {
         })
     }
 
+    #[doc = " get filesystem statistics."]
+    #[instrument(skip(self), err(Debug))]
+    fn statfs(
+        &self,
+        _req: Request,
+        _path: &OsStr,
+    ) -> impl ::core::future::Future<Output=Result<ReplyStatFs>> + Send {
+        async move {
+            // For a memory filesystem, we can define some reasonable values
+            // These values can be adjusted based on your needs
+            let blocks = 1024 * 1024; // 1M blocks
+            let bfree = 1024 * 1024; // All blocks are free
+            let bavail = 1024 * 1024; // All blocks are available
+            let files = 10000; // Max number of files
+            let ffree = 10000; // All inodes are free
+            let bsize = 4096; // Block size (4KB)
+            let namelen = 255; // Max filename length
+            let frsize = 4096; // Fragment size
+
+            Ok(ReplyStatFs {
+                blocks,
+                bfree,
+                bavail,
+                files,
+                ffree,
+                bsize,
+                namelen,
+                frsize,
+            })
+        }
+    }
+
     #[instrument(skip(self), err(Debug))]
     async fn release(
         &self,
@@ -616,6 +705,44 @@ impl PathFilesystem for Fs {
         Ok(())
     }
 
+    #[doc = " set an extended attribute."]
+    #[instrument(skip(self), err(Debug))]
+    async fn setxattr(
+        &self,
+        req: Request,
+        path: &OsStr,
+        name: &OsStr,
+        value: &[u8],
+        flags: u32,
+        position: u32,
+    ) -> Result<()> {
+        error!("setxattr not implemented");
+        Err(libc::ENOSYS.into())
+    }
+
+    #[doc = " get an extended attribute. If size is too small, use [`ReplyXAttr::Size`] to return correct"]
+    #[doc = " size. If size is enough, use [`ReplyXAttr::Data`] to send it, or return error."]
+    #[instrument(skip(self), err(Debug))]
+    async fn getxattr(&self, req: Request, path: &OsStr, name: &OsStr, size: u32) -> Result<ReplyXAttr> {
+        // Ok(ReplyXAttr::Size(3))
+        Ok(ReplyXAttr::Data(Bytes::from("getxattr: bytes")))
+    }
+
+    #[doc = " list extended attribute names. If size is too small, use [`ReplyXAttr::Size`] to return"]
+    #[doc = " correct size. If size is enough, use [`ReplyXAttr::Data`] to send it, or return error."]
+    #[instrument(skip(self), err(Debug))]
+    async fn listxattr(&self, req: Request, path: &OsStr, size: u32) -> Result<ReplyXAttr> {
+        error!("listxattr not implemented");
+        Err(libc::ENOSYS.into())
+    }
+
+    #[doc = " remove an extended attribute."]
+    #[instrument(skip(self), err(Debug))]
+    async fn removexattr(&self, req: Request, path: &OsStr, name: &OsStr) -> Result<()> {
+        error!("removexattr not implemented");
+        Err(libc::ENOSYS.into())
+    }
+
     #[instrument(skip(self), err(Debug))]
     async fn flush(
         &self,
@@ -627,8 +754,115 @@ impl PathFilesystem for Fs {
         Ok(())
     }
 
+    #[doc = " open a directory. Filesystem may store an arbitrary file handle (pointer, index, etc) in"]
+    #[doc = " `fh`, and use this in other all other directory stream operations"]
+    #[doc = " ([`readdir`][PathFilesystem::readdir], [`releasedir`][PathFilesystem::releasedir],"]
+    #[doc = " [`fsyncdir`][PathFilesystem::fsyncdir]). Filesystem may also implement stateless directory"]
+    #[doc = " I/O and not store anything in `fh`.  A file system need not implement this method if it"]
+    #[doc = " sets [`MountOptions::no_open_dir_support`][crate::MountOptions::no_open_dir_support] and if"]
+    #[doc = " the kernel supports `FUSE_NO_OPENDIR_SUPPORT`."]
     #[instrument(skip(self), err(Debug))]
-    async fn access(&self, _req: Request, _path: &OsStr, _mask: u32) -> Result<()> {
+    async fn opendir(&self, _req: Request, path: &OsStr, flags: u32) -> Result<ReplyOpen> {
+        let path = path.to_string_lossy();
+        let paths = split_path(&path);
+
+        debug!("opendir path {}", path);
+        let mut entry = &self.0.read().await.root;
+
+        for path in paths {
+            if let Entry::Dir(dir) = entry {
+                entry = dir
+                    .children
+                    .get(OsStr::new(path))
+                    .ok_or_else(Errno::new_not_exist)?;
+            } else {
+                return Err(Errno::new_is_not_dir());
+            }
+        }
+        if !entry.is_dir() {
+            return Err(Errno::new_is_not_dir());
+        }
+
+        debug!("entry: {:?}", entry);
+
+        Ok(ReplyOpen { fh: 0, flags })
+    }
+
+    // type DirEntryStream<'a>: Stream<Item = Result<DirectoryEntry>> + Send + 'a
+    // where
+    //     Self: 'a;
+
+    type DirEntryStream<'a>
+    = Iter<IntoIter<Result<DirectoryEntry>>>
+    where
+        Self: 'a;
+
+    #[instrument(skip(self), err(Debug))]
+    async fn readdir<'a>(
+        &'a self,
+        req: Request,
+        path: &'a OsStr,
+        fh: u64,
+        offset: i64,
+    ) -> Result<ReplyDirectory<Self::DirEntryStream<'a>>> {
+        let path = path.to_string_lossy();
+        let paths = split_path(&path);
+
+        let mut entry = &self.0.read().await.root;
+        let mut parent = entry;
+
+        for path in paths {
+            parent = entry;
+
+            if let Entry::Dir(dir) = entry {
+                entry = dir
+                    .children
+                    .get(OsStr::new(path))
+                    .ok_or_else(Errno::new_not_exist)?;
+            } else {
+                return Err(Errno::new_is_not_dir());
+            }
+        }
+
+        if let Entry::Dir(dir) = entry {
+            let pre_children = vec![
+                (FileType::Directory, OsString::from("."), entry.attr(), 1),
+                (FileType::Directory, OsString::from(".."), parent.attr(), 2),
+            ];
+
+            let pre_children = stream::iter(pre_children);
+
+            let children =
+                pre_children
+                    .chain(stream::iter(dir.children.iter()).enumerate().map(
+                        |(i, (name, entry))| {
+                            let kind = entry.kind();
+                            let name = name.to_owned();
+                            let attr = entry.attr();
+
+                            (kind, name, attr, i as i64 + 3)
+                        },
+                    ))
+                    .map(|(kind, name, attr, offset)| DirectoryEntry { kind, name, offset })
+                    .skip(offset as _)
+                    .map(Ok)
+                    .collect::<Vec<_>>()
+                    .await;
+
+            Ok(ReplyDirectory {
+                entries: stream::iter(children),
+            })
+        } else {
+            Err(Errno::new_is_not_dir())
+        }
+    }
+
+    #[doc = " release an open directory. For every [`opendir`][PathFilesystem::opendir] call there will"]
+    #[doc = " be exactly one `releasedir` call. `fh` will contain the value set by the"]
+    #[doc = " [`opendir`][PathFilesystem::opendir] method, or will be undefined if the"]
+    #[doc = " [`opendir`][PathFilesystem::opendir] method didn\'t set any value."]
+    #[instrument(skip(self), err(Debug))]
+    async fn releasedir(&self, req: Request, path: &OsStr, fh: u64, flags: u32) -> Result<()> {
         Ok(())
     }
 
@@ -685,71 +919,8 @@ impl PathFilesystem for Fs {
         }
     }
 
-    #[instrument(skip(self))]
-    async fn batch_forget(&self, _req: Request, _paths: &[&OsStr]) {}
-
-    // Not supported by fusefs(5) as of FreeBSD 13.0
-    #[cfg(target_os = "linux")]
-    #[instrument(skip(self), err(Debug))]
-    async fn fallocate(
-        &self,
-        _req: Request,
-        path: Option<&OsStr>,
-        _fh: u64,
-        offset: u64,
-        length: u64,
-        mode: u32,
-    ) -> Result<()> {
-        use std::os::raw::c_int;
-
-        let path = path.ok_or_else(Errno::new_not_exist)?.to_string_lossy();
-        let paths = split_path(&path);
-
-        let mut entry = &mut self.0.write().await.root;
-
-        for path in paths {
-            if let Entry::Dir(dir) = entry {
-                entry = dir
-                    .children
-                    .get_mut(OsStr::new(path))
-                    .ok_or_else(Errno::new_not_exist)?;
-            } else {
-                return Err(Errno::new_is_not_dir());
-            }
-        }
-
-        let file = if let Entry::File(file) = entry {
-            file
-        } else {
-            return Err(Errno::new_is_dir());
-        };
-
-        let offset = offset as usize;
-        let length = length as usize;
-
-        match mode as c_int {
-            0 => {
-                if offset + length > file.content.len() {
-                    file.content.resize(offset + length, 0);
-                }
-
-                Ok(())
-            }
-
-            libc::FALLOC_FL_KEEP_SIZE => {
-                if offset + length > file.content.len() {
-                    file.content.reserve(offset + length - file.content.len());
-                }
-
-                Ok(())
-            }
-
-            _ => Err(Errno::from(libc::EOPNOTSUPP)),
-        }
-    }
-
     type DirEntryPlusStream<'a>
-        = Iter<IntoIter<Result<DirectoryEntryPlus>>>
+    = Iter<IntoIter<Result<DirectoryEntryPlus>>>
     where
         Self: 'a;
 
@@ -910,375 +1081,6 @@ impl PathFilesystem for Fs {
         Ok(ReplyCopyFileRange {
             copied: u64::from(written),
         })
-    }
-
-    #[doc = " read symbolic link."]
-    #[instrument(skip(self), err(Debug))]
-    fn readlink(
-        &self,
-        req: Request,
-        path: &OsStr,
-    ) -> impl ::core::future::Future<Output = Result<ReplyData>> + Send {
-        async move {
-            {
-                error!("Not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " create a symbolic link."]
-    #[instrument(skip(self), err(Debug))]
-    fn symlink(
-        &self,
-        req: Request,
-        parent: &OsStr,
-        name: &OsStr,
-        link_path: &OsStr,
-    ) -> impl ::core::future::Future<Output = Result<ReplyEntry>> + Send {
-        async move {
-            {
-                error!("Not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " create file node. Create a regular file, character device, block device, fifo or socket"]
-    #[doc = " node. When creating file, most cases user only need to implement"]
-    #[doc = " [`create`][PathFilesystem::create]."]
-    #[instrument(skip(self), err(Debug))]
-    fn mknod(
-        &self,
-        req: Request,
-        parent: &OsStr,
-        name: &OsStr,
-        mode: u32,
-        rdev: u32,
-    ) -> impl ::core::future::Future<Output = Result<ReplyEntry>> + Send {
-        async move {
-            {
-                error!("Not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " create a hard link."]
-    #[instrument(skip(self), err(Debug))]
-    fn link(
-        &self,
-        req: Request,
-        path: &OsStr,
-        new_parent: &OsStr,
-        new_name: &OsStr,
-    ) -> impl ::core::future::Future<Output = Result<ReplyEntry>> + Send {
-        async move {
-            {
-                error!("Not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " get filesystem statistics."]
-    #[instrument(skip(self), err(Debug))]
-    fn statfs(
-        &self,
-        _req: Request,
-        _path: &OsStr,
-    ) -> impl ::core::future::Future<Output = Result<ReplyStatFs>> + Send {
-        async move {
-            // For a memory filesystem, we can define some reasonable values
-            // These values can be adjusted based on your needs
-            let blocks = 1024 * 1024; // 1M blocks
-            let bfree = 1024 * 1024; // All blocks are free
-            let bavail = 1024 * 1024; // All blocks are available
-            let files = 10000; // Max number of files
-            let ffree = 10000; // All inodes are free
-            let bsize = 4096; // Block size (4KB)
-            let namelen = 255; // Max filename length
-            let frsize = 4096; // Fragment size
-
-            Ok(ReplyStatFs {
-                blocks,
-                bfree,
-                bavail,
-                files,
-                ffree,
-                bsize,
-                namelen,
-                frsize,
-            })
-        }
-    }
-
-    #[doc = " set an extended attribute."]
-    #[instrument(skip(self), err(Debug))]
-    fn setxattr(
-        &self,
-        req: Request,
-        path: &OsStr,
-        name: &OsStr,
-        value: &[u8],
-        flags: u32,
-        position: u32,
-    ) -> impl ::core::future::Future<Output = Result<()>> + Send {
-        async move {
-            {
-                error!("setxattr not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " get an extended attribute. If size is too small, use [`ReplyXAttr::Size`] to return correct"]
-    #[doc = " size. If size is enough, use [`ReplyXAttr::Data`] to send it, or return error."]
-    #[instrument(skip(self), err(Debug))]
-    fn getxattr(
-        &self,
-        req: Request,
-        path: &OsStr,
-        name: &OsStr,
-        size: u32,
-    ) -> impl ::core::future::Future<Output = Result<ReplyXAttr>> + Send {
-        async move {
-            {
-                error!("getxattr not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " list extended attribute names. If size is too small, use [`ReplyXAttr::Size`] to return"]
-    #[doc = " correct size. If size is enough, use [`ReplyXAttr::Data`] to send it, or return error."]
-    #[instrument(skip(self), err(Debug))]
-    fn listxattr(
-        &self,
-        req: Request,
-        path: &OsStr,
-        size: u32,
-    ) -> impl ::core::future::Future<Output = Result<ReplyXAttr>> + Send {
-        async move {
-            {
-                error!("listxattr not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " remove an extended attribute."]
-    #[instrument(skip(self), err(Debug))]
-    fn removexattr(
-        &self,
-        req: Request,
-        path: &OsStr,
-        name: &OsStr,
-    ) -> impl ::core::future::Future<Output = Result<()>> + Send {
-        async move {
-            {
-                error!("removexattr not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " open a directory. Filesystem may store an arbitrary file handle (pointer, index, etc) in"]
-    #[doc = " `fh`, and use this in other all other directory stream operations"]
-    #[doc = " ([`readdir`][PathFilesystem::readdir], [`releasedir`][PathFilesystem::releasedir],"]
-    #[doc = " [`fsyncdir`][PathFilesystem::fsyncdir]). Filesystem may also implement stateless directory"]
-    #[doc = " I/O and not store anything in `fh`.  A file system need not implement this method if it"]
-    #[doc = " sets [`MountOptions::no_open_dir_support`][crate::MountOptions::no_open_dir_support] and if"]
-    #[doc = " the kernel supports `FUSE_NO_OPENDIR_SUPPORT`."]
-    #[instrument(skip(self), err(Debug))]
-    fn opendir(
-        &self,
-        _req: Request,
-        path: &OsStr,
-        flags: u32,
-    ) -> impl ::core::future::Future<Output = Result<ReplyOpen>> + Send {
-        async move {
-            let path = path.to_string_lossy();
-            let paths = split_path(&path);
-
-            debug!("opendir path {}", path);
-
-            let mut entry = &self.0.read().await.root;
-
-            for path in paths {
-                if let Entry::Dir(dir) = entry {
-                    entry = dir
-                        .children
-                        .get(OsStr::new(path))
-                        .ok_or_else(Errno::new_not_exist)?;
-                } else {
-                    return Err(Errno::new_is_not_dir());
-                }
-            }
-            if !entry.is_dir() {
-                return Err(Errno::new_is_not_dir());
-            }
-
-            Ok(ReplyOpen { fh: 0, flags })
-        }
-    }
-
-    #[doc = " read directory. `offset` is used to track the offset of the directory entries. `fh` will"]
-    #[doc = " contain the value set by the [`opendir`][PathFilesystem::opendir] method, or will be"]
-    #[doc = " undefined if the [`opendir`][PathFilesystem::opendir] method didn\'t set any value."]
-    #[instrument(skip(self), err(Debug))]
-    fn readdir<'a>(
-        &'a self,
-        req: Request,
-        path: &'a OsStr,
-        fh: u64,
-        offset: i64,
-    ) -> impl ::core::future::Future<Output = Result<ReplyDirectory<Self::DirEntryStream<'a>>>> + Send
-    {
-        async move {
-            {
-                // error!("readdir not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " release an open directory. For every [`opendir`][PathFilesystem::opendir] call there will"]
-    #[doc = " be exactly one `releasedir` call. `fh` will contain the value set by the"]
-    #[doc = " [`opendir`][PathFilesystem::opendir] method, or will be undefined if the"]
-    #[doc = " [`opendir`][PathFilesystem::opendir] method didn\'t set any value."]
-    #[instrument(skip(self), err(Debug))]
-    fn releasedir(
-        &self,
-        req: Request,
-        path: &OsStr,
-        fh: u64,
-        flags: u32,
-    ) -> impl ::core::future::Future<Output = Result<()>> + Send {
-        async move {
-            {
-                Ok(())
-            }
-        }
-    }
-
-    #[doc = " synchronize directory contents. If the `datasync` is true, then only the directory contents"]
-    #[doc = " should be flushed, not the metadata. `fh` will contain the value set by the"]
-    #[doc = " [`opendir`][PathFilesystem::opendir] method, or will be undefined if the"]
-    #[doc = " [`opendir`][PathFilesystem::opendir] method didn\'t set any value."]
-    #[instrument(skip(self), err(Debug))]
-    fn fsyncdir(
-        &self,
-        req: Request,
-        path: &OsStr,
-        fh: u64,
-        datasync: bool,
-    ) -> impl ::core::future::Future<Output = Result<()>> + Send {
-        async move {
-            {
-                error!("fsyncdir not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " handle interrupt. When a operation is interrupted, an interrupt request will send to fuse"]
-    #[doc = " server with the unique id of the operation."]
-    #[instrument(skip(self), err(Debug))]
-    fn interrupt(
-        &self,
-        req: Request,
-        unique: u64,
-    ) -> impl ::core::future::Future<Output = Result<()>> + Send {
-        async move {
-            {
-                error!("interrupt not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " map block index within file to block index within device."]
-    #[doc = ""]
-    #[doc = " # Notes:"]
-    #[doc = ""]
-    #[doc = " This may not works because currently this crate doesn\'t support fuseblk mode yet."]
-    #[instrument(skip(self), err(Debug))]
-    fn bmap(
-        &self,
-        req: Request,
-        path: &OsStr,
-        block_size: u32,
-        idx: u64,
-    ) -> impl ::core::future::Future<Output = Result<ReplyBmap>> + Send {
-        async move {
-            {
-                error!("bmap not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " poll for IO readiness events."]
-    #[allow(clippy::too_many_arguments)]
-    #[instrument(skip(self), err(Debug))]
-    fn poll(
-        &self,
-        req: Request,
-        path: Option<&OsStr>,
-        fh: u64,
-        kn: Option<u64>,
-        flags: u32,
-        envents: u32,
-        notify: &Notify,
-    ) -> impl ::core::future::Future<Output = Result<ReplyPoll>> + Send {
-        async move {
-            {
-                error!("poll not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " receive notify reply from kernel."]
-    #[instrument(skip(self), err(Debug))]
-    fn notify_reply(
-        &self,
-        req: Request,
-        path: &OsStr,
-        offset: u64,
-        data: Bytes,
-    ) -> impl ::core::future::Future<Output = Result<()>> + Send {
-        async move {
-            {
-                error!("notify_reply not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
-    }
-
-    #[doc = " allocate space for an open file. This function ensures that required space is allocated for"]
-    #[doc = " specified file."]
-    #[doc = ""]
-    #[doc = " # Notes:"]
-    #[doc = ""]
-    #[doc = " more information about `fallocate`, please see **`man 2 fallocate`**"]
-    #[instrument(skip(self), err(Debug))]
-    fn fallocate(
-        &self,
-        req: Request,
-        path: Option<&OsStr>,
-        fh: u64,
-        offset: u64,
-        length: u64,
-        mode: u32,
-    ) -> impl ::core::future::Future<Output = Result<()>> + Send {
-        async move {
-            {
-                error!("fallocate not implemented");
-                Err(libc::ENOSYS.into())
-            }
-        }
     }
 }
 
