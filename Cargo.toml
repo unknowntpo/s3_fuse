@@ -16,5 +16,5 @@ tracing-subscriber = { version = "0.3.18", features = [
 	"registry",
 ] }
 bytes = "1.5"
-libc = "0.2.158"
+libc = "0.2.168"
 mio = { version = "0.8.11", features = ["os-poll"] }
